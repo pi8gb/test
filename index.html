@@ -1,0 +1,485 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>Finger Tracker</title>
+
+    <style>
+        body {
+            margin: 0;
+            background: #111;
+            color: white;
+            font-family: Arial, sans-serif;
+            text-align: center;
+        }
+
+        h1 {
+            margin: 15px 0 5px;
+        }
+
+        #status {
+            margin: 10px;
+            color: #aaa;
+        }
+
+        button {
+            padding: 12px 20px;
+            font-size: 18px;
+            border: none;
+            border-radius: 10px;
+            cursor: pointer;
+        }
+
+        #cameraContainer {
+            position: relative;
+            width: 100%;
+            max-width: 700px;
+            margin: 10px auto;
+        }
+
+        video {
+            width: 100%;
+            display: block;
+            border-radius: 10px;
+            transform: scaleX(-1);
+        }
+
+        canvas {
+            position: absolute;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            transform: scaleX(-1);
+            pointer-events: none;
+        }
+
+        #coordinates {
+            width: 90%;
+            max-width: 600px;
+            margin: 15px auto;
+            padding: 12px;
+            background: #222;
+            border-radius: 10px;
+            text-align: left;
+            font-family: monospace;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+    </style>
+</head>
+
+<body>
+
+    <h1>Finger Tracker</h1>
+
+    <div id="status">Press Start Camera</div>
+
+    <button id="startButton">Start Camera</button>
+
+    <div id="cameraContainer">
+        <video id="video" autoplay playsinline muted></video>
+        <canvas id="canvas"></canvas>
+    </div>
+
+    <div id="coordinates">
+        Waiting for camera...
+    </div>
+
+
+<script type="module">
+
+import {
+    HandLandmarker,
+    FilesetResolver
+} from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.22/+esm";
+
+
+const video = document.getElementById("video");
+const canvas = document.getElementById("canvas");
+const ctx = canvas.getContext("2d");
+
+const status = document.getElementById("status");
+const coordinates = document.getElementById("coordinates");
+const startButton = document.getElementById("startButton");
+
+let handLandmarker;
+let running = false;
+
+
+// =====================================================
+// LOAD MEDIAPIPE
+// =====================================================
+
+async function loadMediaPipe() {
+
+    status.textContent = "Loading MediaPipe...";
+
+    const vision =
+        await FilesetResolver.forVisionTasks(
+            "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.22/wasm"
+        );
+
+
+    handLandmarker =
+        await HandLandmarker.createFromOptions(
+            vision,
+            {
+                baseOptions: {
+
+                    modelAssetPath:
+                        "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task"
+                },
+
+                runningMode: "VIDEO",
+
+                numHands: 2
+            }
+        );
+
+    status.textContent = "MediaPipe loaded!";
+}
+
+
+// =====================================================
+// START CAMERA
+// =====================================================
+
+async function startCamera() {
+
+    try {
+
+        status.textContent = "Requesting camera permission...";
+
+
+        const stream =
+            await navigator.mediaDevices.getUserMedia({
+
+                video: {
+                    facingMode: "user",
+
+                    width: {
+                        ideal: 1280
+                    },
+
+                    height: {
+                        ideal: 720
+                    }
+                },
+
+                audio: false
+            });
+
+
+        video.srcObject = stream;
+
+        await video.play();
+
+
+        // Wait until Safari knows the video dimensions
+        await new Promise(resolve => {
+
+            if (video.videoWidth > 0) {
+                resolve();
+            } else {
+                video.onloadedmetadata = resolve;
+            }
+
+        });
+
+
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+
+
+        status.textContent =
+            "Camera running — show your hand!";
+
+        startButton.disabled = true;
+
+        running = true;
+
+        detectHands();
+
+    } catch (error) {
+
+        console.error(error);
+
+        status.textContent =
+            "Camera error: " +
+            error.name;
+
+        coordinates.textContent =
+            "Error:\n" +
+            error.message;
+    }
+}
+
+
+// =====================================================
+// HAND DETECTION
+// =====================================================
+
+function detectHands() {
+
+    if (!running) {
+        return;
+    }
+
+
+    if (
+        video.readyState >= 2 &&
+        video.videoWidth > 0
+    ) {
+
+        const results =
+            handLandmarker.detectForVideo(
+                video,
+                performance.now()
+            );
+
+
+        // Clear drawing
+        ctx.clearRect(
+            0,
+            0,
+            canvas.width,
+            canvas.height
+        );
+
+
+        // ---------------------------------------------
+        // HANDS FOUND
+        // ---------------------------------------------
+
+        if (results.landmarks.length > 0) {
+
+            let output = "";
+
+
+            results.landmarks.forEach(
+                (landmarks, handIndex) => {
+
+
+                // =====================================
+                // FINGER TIPS
+                // =====================================
+
+                const thumb = landmarks[4];
+                const index = landmarks[8];
+                const middle = landmarks[12];
+                const ring = landmarks[16];
+                const pinky = landmarks[20];
+
+
+                output +=
+                    "HAND " +
+                    (handIndex + 1) +
+                    "\n\n";
+
+
+                output +=
+                    "Thumb:  " +
+                    formatPoint(thumb) +
+                    "\n";
+
+                output +=
+                    "Index:  " +
+                    formatPoint(index) +
+                    "\n";
+
+                output +=
+                    "Middle: " +
+                    formatPoint(middle) +
+                    "\n";
+
+                output +=
+                    "Ring:   " +
+                    formatPoint(ring) +
+                    "\n";
+
+                output +=
+                    "Pinky:  " +
+                    formatPoint(pinky) +
+                    "\n\n";
+
+
+                // =====================================
+                // DRAW HAND CONNECTIONS
+                // =====================================
+
+                const connections = [
+
+                    [0,1],
+                    [1,2],
+                    [2,3],
+                    [3,4],
+
+                    [0,5],
+                    [5,6],
+                    [6,7],
+                    [7,8],
+
+                    [0,9],
+                    [9,10],
+                    [10,11],
+                    [11,12],
+
+                    [0,13],
+                    [13,14],
+                    [14,15],
+                    [15,16],
+
+                    [0,17],
+                    [17,18],
+                    [18,19],
+                    [19,20],
+
+                    [5,9],
+                    [9,13],
+                    [13,17]
+                ];
+
+
+                ctx.lineWidth = 3;
+
+
+                for (const [a, b] of connections) {
+
+                    const x1 =
+                        landmarks[a].x *
+                        canvas.width;
+
+                    const y1 =
+                        landmarks[a].y *
+                        canvas.height;
+
+                    const x2 =
+                        landmarks[b].x *
+                        canvas.width;
+
+                    const y2 =
+                        landmarks[b].y *
+                        canvas.height;
+
+
+                    ctx.beginPath();
+
+                    ctx.moveTo(x1, y1);
+
+                    ctx.lineTo(x2, y2);
+
+                    ctx.stroke();
+                }
+
+
+                // =====================================
+                // DRAW LANDMARKS
+                // =====================================
+
+                landmarks.forEach((point, i) => {
+
+                    const x =
+                        point.x *
+                        canvas.width;
+
+                    const y =
+                        point.y *
+                        canvas.height;
+
+
+                    ctx.beginPath();
+
+                    ctx.arc(
+                        x,
+                        y,
+                        i === 8 ? 10 : 5,
+                        0,
+                        Math.PI * 2
+                    );
+
+                    ctx.fill();
+                });
+
+
+            });
+
+
+            status.textContent =
+                results.landmarks.length +
+                " hand(s) detected";
+
+
+            coordinates.textContent = output;
+
+        } else {
+
+            status.textContent =
+                "Camera running — no hands detected";
+
+            coordinates.textContent =
+                "No hands detected.";
+        }
+    }
+
+
+    requestAnimationFrame(detectHands);
+}
+
+
+// =====================================================
+// FORMAT COORDINATES
+// =====================================================
+
+function formatPoint(point) {
+
+    return (
+        "X: " +
+        point.x.toFixed(3) +
+
+        "  Y: " +
+        point.y.toFixed(3) +
+
+        "  Z: " +
+        point.z.toFixed(3)
+    );
+}
+
+
+// =====================================================
+// START BUTTON
+// =====================================================
+
+startButton.addEventListener(
+    "click",
+    async () => {
+
+        startButton.disabled = true;
+
+        try {
+
+            await loadMediaPipe();
+
+            await startCamera();
+
+        } catch (error) {
+
+            console.error(error);
+
+            status.textContent =
+                "Error: " +
+                error.message;
+
+            startButton.disabled = false;
+        }
+    }
+);
+
+</script>
+
+</body>
+</html>
+
